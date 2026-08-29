@@ -20,12 +20,6 @@ app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024  # 4MB upload limit
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
-# Print API key status
-if GROQ_API_KEY:
-    print(f"✅ Groq API Key loaded: {GROQ_API_KEY[:10]}...")
-else:
-    print("❌ WARNING: GROQ_API_KEY not set in environment!")
-
 # ---------------------------------------------------------------------------
 # CV parsing
 # ---------------------------------------------------------------------------
@@ -40,7 +34,7 @@ def extract_text_from_cv(file_storage):
         try:
             from pypdf import PdfReader
         except ImportError:
-            return None, "Missing dependency 'pypdf'. Install with: pip install pypdf --break-system-packages"
+            return None, "Missing dependency 'pypdf'. Install with: pip install pypdf"
         try:
             reader = PdfReader(io.BytesIO(data))
             text = "\n".join(page.extract_text() or "" for page in reader.pages)
@@ -52,7 +46,7 @@ def extract_text_from_cv(file_storage):
         try:
             import docx
         except ImportError:
-            return None, "Missing dependency 'python-docx'. Install with: pip install python-docx --break-system-packages"
+            return None, "Missing dependency 'python-docx'. Install with: pip install python-docx"
         try:
             document = docx.Document(io.BytesIO(data))
             text = "\n".join(p.text for p in document.paragraphs)
@@ -66,7 +60,7 @@ def extract_text_from_cv(file_storage):
 def generate_ats_resume(cv_text):
     """Reformats a CV into a clean, ATS-friendly plain-text version"""
     if not GROQ_API_KEY:
-        return None, "GROQ_API_KEY environment variable is not set. Please create a .env file with your key."
+        return None, "GROQ_API_KEY environment variable is not set."
 
     cv_text = cv_text[:10000]
 
@@ -119,26 +113,25 @@ def generate_permutations(first, last, domain):
     f = re.sub(r"[^a-z]", "", first.lower().strip())
     l = re.sub(r"[^a-z]", "", last.lower().strip())
     d = domain.lower().strip()
-    
+
     if not f and not l:
         return []
     if not l:
         return [f"{f}@{d}"]
-    
-    # Include more common patterns
+
     return [
-        f"{f}@{d}",                    # first@domain
-        f"{l}@{d}",                    # last@domain
-        f"{f}.{l}@{d}",               # first.last@domain
-        f"{f}{l}@{d}",                # firstlast@domain
-        f"{f[0]}{l}@{d}",             # flast@domain
-        f"{f}{l[0]}@{d}",             # firstl@domain
-        f"{f}_{l}@{d}",               # first_last@domain
-        f"{l}.{f}@{d}",               # last.first@domain
-        f"{l}{f}@{d}",                # lastfirst@domain
-        f"{f[0]}.{l}@{d}",            # f.last@domain
-        f"{f}.{l[0]}@{d}",            # first.l@domain
-        f"{f[0]}{l[0]}@{d}",          # fl@domain
+        f"{f}@{d}",
+        f"{l}@{d}",
+        f"{f}.{l}@{d}",
+        f"{f}{l}@{d}",
+        f"{f[0]}{l}@{d}",
+        f"{f}{l[0]}@{d}",
+        f"{f}_{l}@{d}",
+        f"{l}.{f}@{d}",
+        f"{l}{f}@{d}",
+        f"{f[0]}.{l}@{d}",
+        f"{f}.{l[0]}@{d}",
+        f"{f[0]}{l[0]}@{d}",
     ]
 
 
@@ -150,56 +143,36 @@ def get_mx_record(domain, timeout=5):
         records = resolver.resolve(domain, "MX")
         mx_records = sorted(records, key=lambda r: r.preference)
         return str(mx_records[0].exchange).rstrip(".")
-    except Exception as e:
-        print(f"MX record error for {domain}: {e}")
+    except Exception:
         return None
 
 
 def verify_email_smtp(mx_server, email, timeout=5):
-    """Try multiple SMTP ports and methods to verify email"""
-    
-    # Try different ports
     ports = [25, 587, 465, 2525]
-    
+
     for port in ports:
         try:
             if port == 465:
-                # SSL connection
                 server = smtplib.SMTP_SSL(mx_server, port, timeout=timeout)
             else:
                 server = smtplib.SMTP(mx_server, port, timeout=timeout)
-            
-            # Try to start TLS if available
+
             if port != 465:
                 try:
                     server.starttls()
                 except:
                     pass
-            
+
             server.helo("localhost")
             server.mail("verify@local-tool.com")
             code, _ = server.rcpt(email)
             server.quit()
-            
-            # 250 means success, 251 means user not local but will forward
+
             if code in [250, 251]:
                 return True
-                
-        except Exception as e:
-            # Try next port
+        except:
             continue
-    
-    # If all SMTP attempts fail, check if domain accepts email
-    # by checking MX record existence
-    try:
-        domain = email.split('@')[1]
-        mx = get_mx_record(domain, timeout=3)
-        if mx:
-            # Domain has MX record, email likely valid
-            return True
-    except:
-        pass
-    
+
     return False
 
 
@@ -210,9 +183,7 @@ def is_catch_all(mx_server, domain):
 
 def find_email(first, last, mx_server, domain, delay=0.3):
     permutations = generate_permutations(first, last, domain)
-    print(f"Testing {len(permutations)} email patterns for {first}.{last}@{domain}")
-    
-    # First, try the most likely patterns first
+
     priority_patterns = [
         f"{first.lower()}@{domain}",
         f"{last.lower()}@{domain}",
@@ -220,27 +191,20 @@ def find_email(first, last, mx_server, domain, delay=0.3):
         f"{first.lower()}{last.lower()}@{domain}",
         f"{first.lower()[0]}{last.lower()}@{domain}",
     ]
-    
-    # Check priority patterns first
+
     for email in priority_patterns:
         if email in permutations:
-            print(f"Priority check: {email}")
             if verify_email_smtp(mx_server, email):
-                print(f"✅ Found: {email}")
                 return email
             time.sleep(delay)
-    
-    # Then check all patterns
+
     for email in permutations:
         if email in priority_patterns:
-            continue  # Already checked
-        print(f"Testing: {email}")
+            continue
         if verify_email_smtp(mx_server, email):
-            print(f"✅ Found: {email}")
             return email
         time.sleep(delay)
-    
-    print("❌ No valid emails found")
+
     return None
 
 
@@ -252,8 +216,6 @@ def clean_domain(raw):
 
 
 def generate_domain_variants(raw_input):
-    """Given 'example', 'example.com', or 'example.co.in', build a list of
-    likely domain candidates to test (original first, then common TLDs)."""
     base = clean_domain(raw_input)
     if not base:
         return []
@@ -278,15 +240,10 @@ def generate_domain_variants(raw_input):
 
 
 def resolve_domain_and_mx(raw_input, timeout=5):
-    """Tries each domain variant until one has a working MX record.
-    Returns (domain, mx_server) or (None, None) if nothing resolves."""
     for candidate in generate_domain_variants(raw_input):
-        print(f"Checking domain: {candidate}")
         mx = get_mx_record(candidate, timeout=timeout)
         if mx:
-            print(f"✅ Found MX for {candidate}: {mx}")
             return candidate, mx
-    print(f"❌ No MX found for {raw_input}")
     return None, None
 
 
@@ -300,7 +257,7 @@ def split_full_name(full_name):
 
 
 # ---------------------------------------------------------------------------
-# HTML Template (Same as before)
+# HTML Template (Full version)
 # ---------------------------------------------------------------------------
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -557,7 +514,7 @@ HTML_TEMPLATE = """
 
 
 # ---------------------------------------------------------------------------
-# Routes - FIXED: Removed "best guess" warning
+# Routes
 # ---------------------------------------------------------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -575,21 +532,18 @@ def index():
                 status="error"
             )
 
-        # Always try to find the email - don't show "best guess" warning
         found = find_email(first, last, mx_server, domain)
-        
         if found:
             return render_template_string(
                 HTML_TEMPLATE, mode="single",
                 first=first, last=last, domain_input=domain_input,
                 result=found, status="success"
             )
-        else:
-            return render_template_string(
-                HTML_TEMPLATE, mode="single",
-                first=first, last=last, domain_input=domain_input,
-                result=f"No valid email patterns found on {domain}.", status="error"
-            )
+        return render_template_string(
+            HTML_TEMPLATE, mode="single",
+            first=first, last=last, domain_input=domain_input,
+            result=f"No valid email patterns found on {domain}.", status="error"
+        )
 
     return render_template_string(HTML_TEMPLATE, mode="single", result=None)
 
@@ -651,12 +605,21 @@ def bulk():
                 bulk_error=f"No mail server found for '{domain_input}' or its common TLD variants"
             )
 
+        # Process each name and find email
         results = []
         for name in names:
             f, l = split_full_name(name)
             found = find_email(f, l, mx_server, domain)
             if found:
                 results.append({"name": name, "email": found})
+
+        if not results:
+            return render_template_string(
+                HTML_TEMPLATE, mode="bulk", domain_input=domain_input, bulk_filename=file_name,
+                bulk_results=[],
+                catch_all_notice=f"No valid emails found for the {len(names)} names provided.",
+                bulk_total=len(names)
+            )
 
         return render_template_string(HTML_TEMPLATE, mode="bulk", domain_input=domain_input, bulk_filename=file_name,
                                        bulk_results=results, bulk_total=len(names), resolved_domain=domain)
@@ -665,4 +628,5 @@ def bulk():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5051, debug=True)
+    port = int(os.environ.get("PORT", 5051))
+    app.run(host="0.0.0.0", port=port, debug=False)
