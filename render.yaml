@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: e-verify
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: RENDER
+        value: true
+    healthCheckPath: /
