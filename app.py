@@ -257,7 +257,7 @@ def split_full_name(full_name):
 
 
 # ---------------------------------------------------------------------------
-# HTML Template (Full version)
+# HTML Template
 # ---------------------------------------------------------------------------
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -516,36 +516,37 @@ HTML_TEMPLATE = """
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-@app.route("/", methods=["GET", "POST"])
+@app.route("/")
 def index():
-    if request.method == "POST":
-        first = request.form.get("first", "")
-        last = request.form.get("last", "")
-        domain_input = request.form.get("domain", "")
+    return render_template_string(HTML_TEMPLATE, mode="single", result=None)
 
-        domain, mx_server = resolve_domain_and_mx(domain_input)
-        if not mx_server:
-            return render_template_string(
-                HTML_TEMPLATE, mode="single",
-                first=first, last=last, domain_input=domain_input,
-                result=f"No mail server found for '{domain_input}' or its common TLD variants",
-                status="error"
-            )
+@app.route("/", methods=["POST"])
+def index_post():
+    first = request.form.get("first", "")
+    last = request.form.get("last", "")
+    domain_input = request.form.get("domain", "")
 
-        found = find_email(first, last, mx_server, domain)
-        if found:
-            return render_template_string(
-                HTML_TEMPLATE, mode="single",
-                first=first, last=last, domain_input=domain_input,
-                result=found, status="success"
-            )
+    domain, mx_server = resolve_domain_and_mx(domain_input)
+    if not mx_server:
         return render_template_string(
             HTML_TEMPLATE, mode="single",
             first=first, last=last, domain_input=domain_input,
-            result=f"No valid email patterns found on {domain}.", status="error"
+            result=f"No mail server found for '{domain_input}' or its common TLD variants",
+            status="error"
         )
 
-    return render_template_string(HTML_TEMPLATE, mode="single", result=None)
+    found = find_email(first, last, mx_server, domain)
+    if found:
+        return render_template_string(
+            HTML_TEMPLATE, mode="single",
+            first=first, last=last, domain_input=domain_input,
+            result=found, status="success"
+        )
+    return render_template_string(
+        HTML_TEMPLATE, mode="single",
+        first=first, last=last, domain_input=domain_input,
+        result=f"No valid email patterns found on {domain}.", status="error"
+    )
 
 
 @app.route("/ats", methods=["GET", "POST"])
@@ -605,7 +606,6 @@ def bulk():
                 bulk_error=f"No mail server found for '{domain_input}' or its common TLD variants"
             )
 
-        # Process each name and find email
         results = []
         for name in names:
             f, l = split_full_name(name)
@@ -625,6 +625,11 @@ def bulk():
                                        bulk_results=results, bulk_total=len(names), resolved_domain=domain)
 
     return render_template_string(HTML_TEMPLATE, mode="bulk", bulk_results=None)
+
+
+@app.route("/health")
+def health():
+    return "OK", 200
 
 
 if __name__ == "__main__":
